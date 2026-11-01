@@ -1,0 +1,46 @@
+[package]
+name = "wayon"
+version = "0.1.0"
+edition = "2021"
+description = "Wayon – eine ressourcensparende Websuchmaschine mit eigenem Crawler und kompaktem Index"
+
+[[bin]]
+name = "wayon"
+path = "src/main.rs"
+
+[lib]
+name = "wayon"
+path = "src/lib.rs"
+
+[dependencies]
+anyhow = "1"
+axum = { version = "0.8", default-features = false, features = ["http1", "tokio", "query", "json"] }
+clap = { version = "4", features = ["derive"] }
+encoding_rs = "0.8"
+env_logger = { version = "0.11", default-features = false, features = ["auto-color", "humantime"] }
+fst = { version = "0.4", features = ["levenshtein"] }
+log = "0.4"
+memmap2 = "0.9"
+rayon = "1"
+reqwest = { version = "0.13", default-features = false, features = ["rustls", "http2", "system-proxy", "gzip", "brotli", "deflate"] }
+rust-stemmers = "1"
+scraper = "0.29"
+ego-tree = "0.11"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal", "sync", "time", "net"] }
+unicode-normalization = "0.1"
+url = "2"
+xxhash-rust = { version = "0.8", features = ["xxh3"] }
+zstd = "0.14"
+rustc-hash = "2"
+
+[dev-dependencies]
+tempfile = "3"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+panic = "abort"
+strip = true

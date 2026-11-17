@@ -175,7 +175,9 @@ pub fn build(cfg: &BuildConfig) -> Result<IndexMeta> {
     })?;
     anyhow::ensure!(
         !latest.is_empty(),
-        "Keine indexierbaren Seiten im Crawl-Speicher {}",
+        "Keine indexierbaren Seiten im Crawl-Speicher {} ({total} Records gelesen).\n\
+         Ohne --data legt `wayon crawl` die Daten in ./data des aktuellen Ordners ab.\n\
+         Vorhandene Crawls finden: find / -name 'segment-000000.wcs' -not -path '/proc/*' 2>/dev/null",
         cfg.store_dir.display()
     );
 

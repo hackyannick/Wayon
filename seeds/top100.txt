@@ -1,0 +1,135 @@
+# Wayon – 100 Start-URLs für einen ersten Crawl
+#
+# Ausgewählt nach Inhalt und Crawlbarkeit (viel Text, gut verlinkt, kein Login,
+# wenig JavaScript), Schwerpunkt deutschsprachig. Soziale Netzwerke, Shops und
+# Video-Plattformen fehlen bewusst: Sie sperren Crawler oder liefern ohne
+# Browser kaum Text.
+#
+# Wayon beachtet robots.txt automatisch. Seiten, die fremde Crawler verbieten,
+# werden übersprungen.
+#
+# Verwendung:
+#   wayon crawl --seeds-file seeds/top100.txt --stay-on-domains \
+#               --max-per-host 2000 --max-pages 200000 --concurrency 100
+#
+# Zeilen mit # sind Kommentare.
+
+# --- Nachschlagewerke & Wissen (11) ---
+https://de.wikipedia.org/wiki/Wikipedia:Hauptseite
+https://en.wikipedia.org/wiki/Main_Page
+https://de.wiktionary.org/wiki/Wiktionary:Hauptseite
+https://en.wiktionary.org/wiki/Wiktionary:Main_Page
+https://de.wikibooks.org/wiki/Hauptseite
+https://de.wikivoyage.org/wiki/Hauptseite
+https://www.duden.de/
+https://www.dwds.de/
+https://www.britannica.com/
+https://plato.stanford.edu/
+https://www.gutenberg.org/
+
+# --- Nachrichten Deutschland (17) ---
+https://www.tagesschau.de/
+https://www.zdfheute.de/
+https://www.deutschlandfunk.de/
+https://www.spiegel.de/
+https://www.zeit.de/
+https://www.faz.net/
+https://www.sueddeutsche.de/
+https://www.welt.de/
+https://www.tagesspiegel.de/
+https://taz.de/
+https://www.n-tv.de/
+https://www.focus.de/
+https://www.br.de/nachrichten/
+https://www.ndr.de/
+https://www.wdr.de/
+https://www.mdr.de/
+https://www.swr.de/
+
+# --- Österreich & Schweiz (4) ---
+https://orf.at/
+https://www.derstandard.at/
+https://www.srf.ch/
+https://www.nzz.ch/
+
+# --- Internationale Nachrichten (8) ---
+https://www.dw.com/de/
+https://www.dw.com/en/
+https://www.bbc.com/news
+https://www.theguardian.com/international
+https://apnews.com/
+https://www.npr.org/
+https://www.aljazeera.com/
+https://www.euronews.com/
+
+# --- Technik & IT (14) ---
+https://www.heise.de/
+https://www.golem.de/
+https://t3n.de/
+https://www.computerbase.de/
+https://www.chip.de/
+https://netzpolitik.org/
+https://www.ionos.de/digitalguide/
+https://wiki.ubuntuusers.de/
+https://wiki.archlinux.org/
+https://arstechnica.com/
+https://www.theverge.com/
+https://lwn.net/
+https://news.ycombinator.com/
+https://stackoverflow.com/
+
+# --- Programmierung & Dokumentation (14) ---
+https://developer.mozilla.org/de/
+https://wiki.selfhtml.org/
+https://docs.python.org/3/
+https://doc.rust-lang.org/book/
+https://go.dev/doc/
+https://pkg.go.dev/std
+https://learn.microsoft.com/de-de/
+https://www.php.net/manual/de/
+https://nodejs.org/docs/latest/api/
+https://react.dev/
+https://www.postgresql.org/docs/
+https://git-scm.com/book/de/v2
+https://docs.docker.com/
+https://kubernetes.io/de/docs/home/
+
+# --- Wissenschaft & Bildung (10) ---
+https://www.spektrum.de/
+https://www.quarks.de/
+https://www.planet-wissen.de/
+https://www.leifiphysik.de/
+https://www.bpb.de/
+https://www.mpg.de/
+https://www.nature.com/
+https://www.sciencedaily.com/
+https://www.nasa.gov/
+https://ocw.mit.edu/
+
+# --- Staat, Recht & Verbraucher (9) ---
+https://www.bundesregierung.de/
+https://www.bundestag.de/
+https://www.gesetze-im-internet.de/
+https://www.destatis.de/
+https://www.bsi.bund.de/
+https://www.verbraucherzentrale.de/
+https://www.stiftung-warentest.de/
+https://european-union.europa.eu/index_de
+https://www.lpb-bw.de/
+
+# --- Gesundheit (4) ---
+https://gesund.bund.de/
+https://www.apotheken-umschau.de/
+https://www.netdoktor.de/
+https://www.who.int/
+
+# --- Alltag, Kultur, Sport & Reisen (9) ---
+https://www.chefkoch.de/
+https://www.kicker.de/
+https://www.sportschau.de/
+https://www.dwd.de/
+https://www.geo.de/
+https://www.goethe.de/
+https://www.deutsche-digitale-bibliothek.de/
+https://de.wikihow.com/
+https://wiki.openstreetmap.org/

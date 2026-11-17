@@ -1,0 +1,35 @@
+# systemd-Unit für den Wayon-Webserver.
+#
+# Installation (als root):
+#   useradd --system --home /var/lib/wayon --create-home wayon
+#   cp deploy/wayon.service /etc/systemd/system/
+#   systemctl daemon-reload && systemctl enable --now wayon
+#
+# Nach einem neuen Index (`wayon index`) den Dienst neu starten:
+#   systemctl restart wayon
+
+[Unit]
+Description=Wayon Suchmaschine (Weboberfläche und API)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=wayon
+Group=wayon
+WorkingDirectory=/var/lib/wayon
+# 127.0.0.1 = nur lokal erreichbar (z.B. hinter nginx/Caddy).
+# Für direkten Zugriff aus dem Netz 0.0.0.0:8080 eintragen.
+ExecStart=/usr/local/bin/wayon --data /var/lib/wayon serve --addr 127.0.0.1:8080
+Restart=on-failure
+Environment=RUST_LOG=info
+
+# Absicherung
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/lib/wayon
+MemoryMax=1G
+
+[Install]
+WantedBy=multi-user.target

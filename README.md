@@ -5,25 +5,82 @@ Wayon ist eine Websuchmaschine in **Rust** mit eigenem Crawler, eigenem invertie
 ![Startseite mit Autovervollständigung](docs/startseite.png)
 ![Ergebnisseite](docs/ergebnisse.png)
 
-## Schnellstart
+## Installation
+
+Wayon läuft unter Linux, macOS und Windows. Für einen Dauerbetrieb ist ein Linux-Server (oder WSL2 unter Windows) am einfachsten.
+
+### 1. Voraussetzungen
+
+**Rust** (Version 1.88 oder neuer) über rustup installieren:
 
 ```bash
-cargo build --release
-B=target/release/wayon
-
-# 1. Crawlen (fortsetzbar, Strg+C oder SIGTERM beendet sauber)
-$B crawl https://example.org https://example.com --max-pages 5000
-
-# 2. Index bauen
-$B index
-
-# 3. Suchen: Weboberfläche auf http://127.0.0.1:8080 …
-$B serve --addr 127.0.0.1:8080
-#    … oder direkt im Terminal
-$B search "rust web crawler" -n 10
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+source "$HOME/.cargo/env"
 ```
 
-Alle Daten liegen unter `--data` (Standard `./data`): `data/crawl/` enthält die Rohdaten, `data/index/` den Suchindex.
+Dazu kommen ein **C-Compiler** und **git**, weil die TLS-Bibliothek C-Code enthält:
+
+| System | Befehl |
+|---|---|
+| Debian / Ubuntu | `sudo apt install build-essential git` |
+| Fedora | `sudo dnf install gcc gcc-c++ make git` |
+| Arch | `sudo pacman -S base-devel git` |
+| macOS | `xcode-select --install` |
+| Windows | [rustup-init.exe](https://rustup.rs) und dazu „Visual Studio Build Tools“ mit „Desktopentwicklung mit C++“. Falls der Build bei `aws-lc-sys` scheitert, zusätzlich [CMake](https://cmake.org) und [NASM](https://nasm.us) installieren. |
+
+Falls der Build bei `aws-lc-sys` mit einer CMake-Meldung abbricht, `cmake` nachinstallieren (z. B. `sudo apt install cmake`).
+
+### 2. Herunterladen und bauen
+
+```bash
+git clone https://github.com/hackyannick/Wayon.git
+cd Wayon
+cargo install --path .          # baut und legt `wayon` nach ~/.cargo/bin
+wayon --version
+```
+
+Der erste Build dauert einige Minuten. Alternativ baut `cargo build --release` nur das Programm unter `target/release/wayon`; das lässt sich überall hin kopieren, z. B. nach `/usr/local/bin/`.
+
+### 3. Crawlen, indexieren, suchen
+
+```bash
+# Crawl mit den mitgelieferten 100 Start-Seiten (siehe unten)
+wayon crawl --seeds-file seeds/top100.txt --stay-on-domains \
+            --max-per-host 2000 --max-pages 200000 --concurrency 100
+
+wayon index                          # Index bauen
+wayon serve --addr 127.0.0.1:8080    # http://127.0.0.1:8080 im Browser öffnen
+wayon search "klimawandel folgen"    # oder im Terminal suchen
+```
+
+Alle Daten liegen unter `--data` (Standard `./data`): `data/crawl/` enthält die Rohdaten, `data/index/` den Suchindex. Ein Crawl lässt sich jederzeit mit Strg+C abbrechen; der nächste `wayon crawl` setzt dort fort, wo er aufgehört hat (Start-URLs müssen dann nicht erneut angegeben werden).
+
+### Die Start-Liste `seeds/top100.txt`
+
+Sie enthält 100 inhaltsreiche, gut crawlbare Websites, überwiegend deutschsprachig: Nachschlagewerke, Nachrichten (DE/AT/CH/international), Technik, Programmier-Dokumentation, Wissenschaft, Behörden und Recht, Gesundheit sowie Alltag und Kultur. Soziale Netzwerke, Shops und Videoportale fehlen bewusst: Sie sperren Crawler oder liefern ohne Browser kaum Text. Die Liste ist eine normale Textdatei, also einfach erweitern oder kürzen.
+
+- `--stay-on-domains` hält den Crawl auf diesen Websites. Ohne die Option folgt Wayon auch Links zu fremden Domains und wächst unkontrolliert ins ganze Web.
+- `--max-per-host 2000` × 100 Websites ergibt ca. 200.000 Seiten. Wayon fragt jede Website höchstens einmal pro Sekunde an. Damit dauert das je nach Leitung grob 1–3 Stunden und braucht ungefähr 1–2 GB Platz für Rohdaten und Index zusammen (grobe Schätzung, je nach Seiten).
+- Websites, deren robots.txt fremde Crawler verbietet, werden automatisch übersprungen.
+
+### Als Dienst betreiben (Linux, systemd)
+
+```bash
+sudo cp ~/.cargo/bin/wayon /usr/local/bin/
+sudo useradd --system --home /var/lib/wayon --create-home wayon
+sudo cp deploy/wayon.service /etc/systemd/system/
+sudo systemctl daemon-reload && sudo systemctl enable --now wayon
+```
+
+Crawl und Index laufen als derselbe Benutzer, danach den Dienst neu starten, damit er den neuen Index lädt:
+
+```bash
+sudo -u wayon wayon --data /var/lib/wayon crawl --seeds-file /pfad/zu/seeds/top100.txt --stay-on-domains
+sudo -u wayon wayon --data /var/lib/wayon index
+sudo systemctl restart wayon
+```
+
+Der Dienst lauscht standardmäßig nur auf `127.0.0.1:8080`. Für Zugriff von außen entweder einen Reverse-Proxy (nginx, Caddy) davorsetzen oder in `wayon.service` die Adresse auf `0.0.0.0:8080` ändern und die Firewall entsprechend öffnen. Regelmäßiges Nachcrawlen geht z. B. per Cronjob mit denselben drei Befehlen.
 
 ### Befehle
 

@@ -158,6 +158,8 @@ pub struct Crawler {
     cfg: CrawlConfig,
     client: reqwest::Client,
     agent_token: String,
+    /// Erlaubte Domains als Hash-Menge (schnell auch bei Tausenden Seeds).
+    allowed: std::collections::HashSet<String>,
 }
 
 fn origin_of(u: &Url) -> String {
@@ -192,22 +194,37 @@ impl Crawler {
             .next()
             .unwrap_or("WayonBot")
             .to_string();
+        let allowed = cfg
+            .allowed_domains
+            .iter()
+            .map(|d| d.trim().trim_start_matches("www.").to_ascii_lowercase())
+            .filter(|d| !d.is_empty())
+            .collect();
         Ok(Crawler {
             cfg,
             client,
             agent_token,
+            allowed,
         })
     }
 
     fn domain_allowed(&self, u: &Url) -> bool {
-        if self.cfg.allowed_domains.is_empty() {
+        if self.allowed.is_empty() {
             return true;
         }
+        // Host selbst und alle übergeordneten Domains nachschlagen:
+        // a.b.example.com → a.b.example.com, b.example.com, example.com, com
         let h = u.host_str().unwrap_or("").to_ascii_lowercase();
-        self.cfg
-            .allowed_domains
-            .iter()
-            .any(|d| h == *d || h.ends_with(&format!(".{d}")))
+        let mut rest = h.as_str();
+        loop {
+            if self.allowed.contains(rest) {
+                return true;
+            }
+            match rest.find('.') {
+                Some(i) => rest = &rest[i + 1..],
+                None => return false,
+            }
+        }
     }
 
     fn enqueue(&self, fr: &mut Frontier, url: &str, depth: u32) -> bool {
@@ -797,6 +814,25 @@ fn xml_locs(xml: &str) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn domain_filter() {
+        let cfg = CrawlConfig {
+            allowed_domains: vec!["example.com".into(), "www.docs.rs".into(), "go.dev".into()],
+            ..Default::default()
+        };
+        let c = Crawler::new(cfg).unwrap();
+        let ok = |s: &str| c.domain_allowed(&Url::parse(s).unwrap());
+        assert!(ok("https://example.com/a"));
+        assert!(ok("https://www.example.com/a"));
+        assert!(ok("https://deep.sub.example.com/"));
+        assert!(ok("https://docs.rs/serde"));
+        assert!(!ok("https://notexample.com/"));
+        assert!(!ok("https://example.com.evil.org/"));
+        assert!(!ok("https://dev/"));
+        let open = Crawler::new(CrawlConfig::default()).unwrap();
+        assert!(open.domain_allowed(&Url::parse("https://anything.org/").unwrap()));
+    }
 
     #[test]
     fn parses_sitemap() {

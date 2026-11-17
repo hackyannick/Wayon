@@ -55,9 +55,11 @@ wayon search "klimawandel folgen"    # oder im Terminal suchen
 
 Alle Daten liegen unter `--data` (Standard `./data`): `data/crawl/` enthält die Rohdaten, `data/index/` den Suchindex. Ein Crawl lässt sich jederzeit mit Strg+C abbrechen; der nächste `wayon crawl` setzt dort fort, wo er aufgehört hat (Start-URLs müssen dann nicht erneut angegeben werden).
 
-### Die Start-Liste `seeds/top100.txt`
+### Die Start-Listen in `seeds/`
 
-Sie enthält 100 inhaltsreiche, gut crawlbare Websites, überwiegend deutschsprachig: Nachschlagewerke, Nachrichten (DE/AT/CH/international), Technik, Programmier-Dokumentation, Wissenschaft, Behörden und Recht, Gesundheit sowie Alltag und Kultur. Soziale Netzwerke, Shops und Videoportale fehlen bewusst: Sie sperren Crawler oder liefern ohne Browser kaum Text. Die Liste ist eine normale Textdatei, also einfach erweitern oder kürzen.
+`seeds/tech1000.txt` enthält 1000 Technik-Websites in 21 Themen: Tech-News (international und deutschsprachig), Programmiersprachen, Frameworks, Datenbanken, DevOps und Cloud, Linux/BSD, Open Source, IT-Sicherheit, KI, Engineering-Blogs, Hardware und Elektronik, Standards u. a. Jeder Host kommt nur einmal vor.
+
+`seeds/top100.txt` enthält 100 inhaltsreiche, gut crawlbare Websites, überwiegend deutschsprachig: Nachschlagewerke, Nachrichten (DE/AT/CH/international), Technik, Programmier-Dokumentation, Wissenschaft, Behörden und Recht, Gesundheit sowie Alltag und Kultur. Soziale Netzwerke, Shops und Videoportale fehlen bewusst: Sie sperren Crawler oder liefern ohne Browser kaum Text. Die Liste ist eine normale Textdatei, also einfach erweitern oder kürzen.
 
 - `--stay-on-domains` hält den Crawl auf diesen Websites. Ohne die Option folgt Wayon auch Links zu fremden Domains und wächst unkontrolliert ins ganze Web.
 - `--max-per-host 2000` × 100 Websites ergibt ca. 200.000 Seiten. Wayon fragt jede Website höchstens einmal pro Sekunde an. Damit dauert das je nach Leitung grob 1–3 Stunden und braucht ungefähr 1–2 GB Platz für Rohdaten und Index zusammen (grobe Schätzung, je nach Seiten).

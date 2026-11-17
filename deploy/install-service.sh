@@ -2,7 +2,7 @@
 # Richtet Wayon als systemd-Dienst ein (Debian/Ubuntu, als root):
 #   - legt den Systembenutzer "wayon" an (falls nötig)
 #   - installiert das Programm nach /usr/local/bin/wayon
-#   - legt /var/lib/wayon an, kopiert die Seed-Liste dorthin
+#   - legt /var/lib/wayon an, schreibt alle Seed-Listen als seeds.txt dorthin
 #   - übernimmt einen vorhandenen Crawl aus <repo>/data (falls dort einer liegt)
 #   - installiert und startet den Dienst
 #
@@ -59,7 +59,7 @@ mv /usr/local/bin/wayon.new /usr/local/bin/wayon
 
 echo "==> Datenverzeichnis $DATA"
 mkdir -p "$DATA"
-cp "$REPO/seeds/top100.txt" "$DATA/seeds.txt"
+cat "$REPO"/seeds/*.txt > "$DATA/seeds.txt"   # alle mitgelieferten Listen
 if [[ -d "$REPO/data/crawl" && ! -d "$DATA/crawl" ]]; then
     echo "    übernehme vorhandenen Crawl aus $REPO/data/crawl"
     mv "$REPO/data/crawl" "$DATA/crawl"

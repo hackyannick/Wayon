@@ -354,6 +354,7 @@ impl Crawler {
         let mut fatal: Option<anyhow::Error> = None;
         let t0 = Instant::now();
         let mut last_report = Instant::now();
+        let (mut last_fetched, mut last_bytes) = (0u64, 0u64);
         let ctrl_c = shutdown_signal();
         tokio::pin!(ctrl_c);
 
@@ -468,12 +469,20 @@ impl Crawler {
             }
 
             if last_report.elapsed() >= Duration::from_secs(10) {
+                let interval = last_report.elapsed().as_secs_f64().max(0.001);
                 last_report = Instant::now();
                 let secs = t0.elapsed().as_secs_f64().max(0.001);
+                let now_rate = (stats.fetched - last_fetched) as f64 / interval;
+                let mib_s = (stats.bytes - last_bytes) as f64 / interval / 1048576.0;
+                last_fetched = stats.fetched;
+                last_bytes = stats.bytes;
+                // "aktiv" nahe am Maximum → Parallelität/Bandbreite begrenzt;
+                // deutlich darunter → Höflichkeitspausen der Hosts begrenzen.
                 log::info!(
-                    "{} geladen, {} gespeichert, {} Fehler, {} übersprungen | {:.1} Seiten/s | {} URLs in {} Hosts wartend",
+                    "{} geladen, {} gespeichert, {} Fehler, {} übersprungen | aktuell {:.0} Seiten/s ({:.1} MiB/s), Ø {:.0} | aktiv {}/{} | {} URLs in {} Hosts wartend",
                     stats.fetched, stats.stored, stats.errors, stats.skipped,
-                    stats.fetched as f64 / secs, fr.queued, fr.hosts.len()
+                    now_rate, mib_s, stats.fetched as f64 / secs, in_flight, cfg.concurrency,
+                    fr.queued, fr.hosts.len()
                 );
                 if let Err(e) = writer.flush() {
                     log::error!("Schreiben fehlgeschlagen: {e:#}");

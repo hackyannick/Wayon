@@ -74,15 +74,41 @@ async fn api_suggest(
     Json(serde_json::json!([p.q, list]))
 }
 
-async fn opensearch() -> Response {
-    let xml = r#"<?xml version="1.0" encoding="UTF-8"?>
+/// Basis-URL aus `Host` und – hinter einem Reverse-Proxy – `X-Forwarded-Proto`.
+fn base_url(headers: &axum::http::HeaderMap) -> String {
+    let get = |name: &str| {
+        headers
+            .get(name)
+            .and_then(|v| v.to_str().ok())
+            .map(str::trim)
+    };
+    let host = get("host")
+        .filter(|h| {
+            !h.is_empty()
+                && h.chars()
+                    .all(|c| c.is_ascii_alphanumeric() || ".-:[]".contains(c))
+        })
+        .unwrap_or("localhost");
+    let proto = match get("x-forwarded-proto") {
+        Some(p) if p.eq_ignore_ascii_case("https") => "https",
+        _ => "http",
+    };
+    format!("{proto}://{host}")
+}
+
+async fn opensearch(headers: axum::http::HeaderMap) -> Response {
+    // OpenSearch verlangt absolute URLs
+    let base = base_url(&headers);
+    let xml = format!(
+        r#"<?xml version="1.0" encoding="UTF-8"?>
 <OpenSearchDescription xmlns="http://a9.com/-/spec/opensearch/1.1/">
   <ShortName>Wayon</ShortName>
   <Description>Wayon Websuche</Description>
   <InputEncoding>UTF-8</InputEncoding>
-  <Url type="text/html" template="/search?q={searchTerms}"/>
-  <Url type="application/x-suggestions+json" template="/api/suggest?q={searchTerms}"/>
-</OpenSearchDescription>"#;
+  <Url type="text/html" template="{base}/search?q={{searchTerms}}"/>
+  <Url type="application/x-suggestions+json" template="{base}/api/suggest?q={{searchTerms}}"/>
+</OpenSearchDescription>"#
+    );
     (
         [(
             header::CONTENT_TYPE,
@@ -298,5 +324,17 @@ mod tests {
             "example.com › a › bü"
         );
         assert_eq!(display_url("https://example.com/"), "example.com");
+    }
+
+    #[test]
+    fn base_url_behind_proxy() {
+        let mut h = axum::http::HeaderMap::new();
+        assert_eq!(base_url(&h), "http://localhost");
+        h.insert("host", "suche.example.de".parse().unwrap());
+        assert_eq!(base_url(&h), "http://suche.example.de");
+        h.insert("x-forwarded-proto", "https".parse().unwrap());
+        assert_eq!(base_url(&h), "https://suche.example.de");
+        h.insert("host", "evil\"><x".parse().unwrap());
+        assert_eq!(base_url(&h), "https://localhost");
     }
 }

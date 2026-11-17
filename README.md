@@ -80,7 +80,34 @@ sudo -u wayon wayon --data /var/lib/wayon index
 sudo systemctl restart wayon
 ```
 
-Der Dienst lauscht standardmäßig nur auf `127.0.0.1:8080`. Für Zugriff von außen entweder einen Reverse-Proxy (nginx, Caddy) davorsetzen oder in `wayon.service` die Adresse auf `0.0.0.0:8080` ändern und die Firewall entsprechend öffnen. Regelmäßiges Nachcrawlen geht z. B. per Cronjob mit denselben drei Befehlen.
+Der Dienst lauscht nur auf `127.0.0.1:8080` und ist damit von außen nicht erreichbar. Öffentlich zugänglich wird er über NGINX mit HTTPS (nächster Abschnitt). Regelmäßiges Nachcrawlen geht z. B. per Cronjob mit denselben drei Befehlen.
+
+### HTTPS mit NGINX und Let's Encrypt
+
+Voraussetzungen:
+- Ein Debian- oder Ubuntu-Server, auf dem Wayon wie oben als Dienst läuft
+- Eine Domain, deren DNS-Eintrag (A, bei IPv6 auch AAAA) auf den Server zeigt
+- Offene Ports 80 und 443, z. B. mit `sudo ufw allow 80,443/tcp`
+
+Dann genügt ein Befehl:
+
+```bash
+sudo deploy/setup-https.sh suche.meinedomain.de admin@meinedomain.de
+```
+
+Das Skript
+1. installiert `nginx` und `certbot`,
+2. holt ein kostenloses Zertifikat von Let's Encrypt,
+3. installiert die Konfiguration [`deploy/nginx/wayon.conf`](deploy/nginx/wayon.conf) mit deiner Domain und
+4. richtet die automatische Verlängerung ein (certbot-Timer; NGINX wird nach jeder Erneuerung neu geladen).
+
+Danach ist die Suche unter `https://suche.meinedomain.de` erreichbar. Die Konfiguration bietet:
+- Weiterleitung von HTTP auf HTTPS, HTTP/2, nur TLS 1.2 und 1.3
+- Sicherheits-Header: HSTS, Content-Security-Policy, Schutz vor Einbettung in fremde Seiten
+- **Rate-Limit pro IP:** Suche 5 Anfragen/s (Burst 20), Autovervollständigung 20/s (Burst 40); darüber antwortet NGINX mit 429. Die Werte stehen oben in `wayon.conf` und lassen sich dort anpassen.
+- gzip-Kompression, nur GET/HEAD erlaubt, Keep-Alive zum Backend
+
+Wer die Konfiguration lieber von Hand einrichtet: `deploy/nginx/wayon.conf` nach `/etc/nginx/sites-available/` kopieren, `suche.example.de` durch die eigene Domain ersetzen, Zertifikat mit `certbot certonly --webroot -w /var/www/certbot -d <domain>` holen, verlinken und `nginx -t && systemctl reload nginx`.
 
 ### Befehle
 

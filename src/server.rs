@@ -4,14 +4,16 @@ use crate::index::Index;
 use crate::search::snippet::html_escape;
 use crate::search::{SearchResults, Searcher};
 use axum::extract::{Query, State};
-use axum::http::header;
+use axum::http::{header, StatusCode};
 use axum::response::{Html, IntoResponse, Json, Response};
 use axum::routing::get;
 use axum::Router;
 use serde::Deserialize;
 use std::fmt::Write;
 use std::net::SocketAddr;
-use std::sync::Arc;
+use std::path::PathBuf;
+use std::sync::{Arc, RwLock};
+use std::time::{Duration, SystemTime};
 
 const PER_PAGE: usize = 10;
 
@@ -25,9 +27,65 @@ pub struct SearchParams {
     n: Option<usize>,
 }
 
-type AppState = Arc<Index>;
+/// Gemeinsamer Zustand: der aktuell geladene Index (oder keiner, solange noch
+/// kein Index gebaut wurde). Ein neuer Index wird im laufenden Betrieb getauscht.
+pub struct Shared {
+    dir: PathBuf,
+    current: RwLock<Option<Arc<Index>>>,
+}
 
-pub fn router(index: Arc<Index>) -> Router {
+impl Shared {
+    pub fn new(dir: PathBuf) -> Shared {
+        Shared {
+            dir,
+            current: RwLock::new(None),
+        }
+    }
+
+    pub fn get(&self) -> Option<Arc<Index>> {
+        self.current
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
+    }
+
+    fn set(&self, index: Index) {
+        *self.current.write().unwrap_or_else(|e| e.into_inner()) = Some(Arc::new(index));
+    }
+
+    /// Änderungszeit von `meta.json` – wird als letzte Datei eines Index geschrieben.
+    fn index_stamp(&self) -> Option<SystemTime> {
+        std::fs::metadata(self.dir.join("meta.json"))
+            .and_then(|m| m.modified())
+            .ok()
+    }
+
+    /// Lädt den Index, falls er neu ist. Liefert den Zeitstempel des geladenen Index.
+    fn reload_if_changed(&self, loaded: Option<SystemTime>) -> Option<SystemTime> {
+        let stamp = self.index_stamp()?;
+        if Some(stamp) == loaded {
+            return loaded;
+        }
+        match Index::open(&self.dir) {
+            Ok(index) => {
+                log::info!("Index geladen: {} Dokumente", index.num_docs());
+                self.set(index);
+                Some(stamp)
+            }
+            Err(e) => {
+                log::warn!(
+                    "Index in {} konnte nicht geladen werden: {e:#}",
+                    self.dir.display()
+                );
+                loaded
+            }
+        }
+    }
+}
+
+type AppState = Arc<Shared>;
+
+pub fn router(index: AppState) -> Router {
     Router::new()
         .route("/", get(home))
         .route("/search", get(home))
@@ -37,36 +95,64 @@ pub fn router(index: Arc<Index>) -> Router {
         .with_state(index)
 }
 
-pub async fn serve(index: Index, addr: SocketAddr) -> anyhow::Result<()> {
-    let n = index.num_docs();
-    let app = router(Arc::new(index));
-    let listener = tokio::net::TcpListener::bind(addr).await?;
-    log::info!("Wayon läuft auf http://{addr}  ({n} Dokumente im Index)");
+/// Startet den Server. Fehlt der Index noch, läuft der Server trotzdem und zeigt
+/// einen Hinweis; neue Indizes (`wayon index`) werden automatisch übernommen.
+pub async fn serve(index_dir: PathBuf, addr: SocketAddr) -> anyhow::Result<()> {
+    let shared = Arc::new(Shared::new(index_dir.clone()));
+    let mut loaded = shared.reload_if_changed(None);
+    if loaded.is_none() {
+        log::warn!(
+            "Noch kein Index in {} – bitte `wayon index` ausführen. Der Server übernimmt ihn automatisch.",
+            index_dir.display()
+        );
+    }
+    let watcher = shared.clone();
+    tokio::spawn(async move {
+        loop {
+            tokio::time::sleep(Duration::from_secs(5)).await;
+            let w = watcher.clone();
+            loaded = tokio::task::spawn_blocking(move || w.reload_if_changed(loaded))
+                .await
+                .unwrap_or(loaded);
+        }
+    });
+    let app = router(shared);
+    let listener = tokio::net::TcpListener::bind(addr)
+        .await
+        .map_err(|e| anyhow::anyhow!("Adresse {addr} nicht verfügbar: {e}"))?;
+    log::info!("Wayon läuft auf http://{addr}");
     axum::serve(listener, app)
         .with_graceful_shutdown(crate::crawler::shutdown_signal())
         .await?;
     Ok(())
 }
 
-async fn run_search(index: AppState, q: String, page: usize, n: usize) -> SearchResults {
+async fn run_search(index: Arc<Index>, q: String, page: usize, n: usize) -> SearchResults {
     tokio::task::spawn_blocking(move || Searcher::new(&index).search(&q, page * n, n))
         .await
         .unwrap_or_default()
 }
 
-async fn api_search(
-    State(index): State<AppState>,
-    Query(p): Query<SearchParams>,
-) -> Json<SearchResults> {
+async fn api_search(State(st): State<AppState>, Query(p): Query<SearchParams>) -> Response {
+    let Some(index) = st.get() else {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(serde_json::json!({"error": "Noch kein Index vorhanden"})),
+        )
+            .into_response();
+    };
     let n = p.n.unwrap_or(PER_PAGE).clamp(1, 100);
     let page = p.page.unwrap_or(1).max(1) - 1;
-    Json(run_search(index, p.q, page.min(99), n).await)
+    Json(run_search(index, p.q, page.min(99), n).await).into_response()
 }
 
 async fn api_suggest(
-    State(index): State<AppState>,
+    State(st): State<AppState>,
     Query(p): Query<SearchParams>,
 ) -> Json<serde_json::Value> {
+    let Some(index) = st.get() else {
+        return Json(serde_json::json!([p.q, []]));
+    };
     let q = p.q.clone();
     let list = tokio::task::spawn_blocking(move || Searcher::new(&index).complete(&q, 8))
         .await
@@ -218,7 +304,18 @@ fn q_link(q: &str, page: usize) -> String {
     }
 }
 
-async fn home(State(index): State<AppState>, Query(p): Query<SearchParams>) -> Html<String> {
+async fn home(State(st): State<AppState>, Query(p): Query<SearchParams>) -> Response {
+    let Some(index) = st.get() else {
+        let body = format!(
+            r#"<div class="home"><div class="logo">{}</div><p>Der Suchindex wird gerade aufgebaut oder fehlt noch.</p><footer>Auf dem Server <code>wayon index</code> ausführen – die Suche ist danach ohne Neustart verfügbar.</footer></div>"#,
+            logo()
+        );
+        return (StatusCode::SERVICE_UNAVAILABLE, page("Wayon", &body)).into_response();
+    };
+    home_with(index, p).await.into_response()
+}
+
+async fn home_with(index: Arc<Index>, p: SearchParams) -> Html<String> {
     if p.q.trim().is_empty() {
         let body = format!(
             r#"<div class="home"><div class="logo">{}</div>{}<footer>{} Seiten im Index</footer></div>"#,

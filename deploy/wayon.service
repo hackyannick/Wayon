@@ -5,8 +5,8 @@
 #   cp deploy/wayon.service /etc/systemd/system/
 #   systemctl daemon-reload && systemctl enable --now wayon
 #
-# Nach einem neuen Index (`wayon index`) den Dienst neu starten:
-#   systemctl restart wayon
+# Ein neuer Index (`wayon index`) wird im laufenden Betrieb übernommen,
+# ein Neustart ist nicht nötig.
 
 [Unit]
 Description=Wayon Suchmaschine (Weboberfläche und API)

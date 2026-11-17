@@ -72,15 +72,16 @@ sudo cp deploy/wayon.service /etc/systemd/system/
 sudo systemctl daemon-reload && sudo systemctl enable --now wayon
 ```
 
-Crawl und Index laufen als derselbe Benutzer, danach den Dienst neu starten, damit er den neuen Index lädt:
+Crawl und Index laufen als derselbe Benutzer und im selben Datenverzeichnis wie der Dienst:
 
 ```bash
 sudo -u wayon wayon --data /var/lib/wayon crawl --seeds-file /pfad/zu/seeds/top100.txt --stay-on-domains
 sudo -u wayon wayon --data /var/lib/wayon index
-sudo systemctl restart wayon
 ```
 
-Der Dienst lauscht nur auf `127.0.0.1:8080` und ist damit von außen nicht erreichbar. Öffentlich zugänglich wird er über NGINX mit HTTPS (nächster Abschnitt). Regelmäßiges Nachcrawlen geht z. B. per Cronjob mit denselben drei Befehlen.
+Ein Neustart ist nicht nötig: Der Dienst prüft alle 5 Sekunden, ob ein neuer Index vorliegt, und übernimmt ihn im laufenden Betrieb. Solange noch kein Index existiert, zeigt die Startseite einen Hinweis (HTTP 503).
+
+Der Dienst lauscht nur auf `127.0.0.1:8080` und ist damit von außen nicht erreichbar. Öffentlich zugänglich wird er über NGINX mit HTTPS (nächster Abschnitt). Regelmäßiges Nachcrawlen geht z. B. per Cronjob mit denselben zwei Befehlen.
 
 ### HTTPS mit NGINX und Let's Encrypt
 
@@ -135,6 +136,28 @@ Wer die Konfiguration lieber von Hand einrichtet: `deploy/nginx/wayon.conf` nach
 - `GET /api/search?q=…&page=1&n=10` liefert Treffer als JSON (Titel, URL, Snippet, Score, Trefferzahl, Korrektur).
 - `GET /api/suggest?q=…` liefert Vorschläge im OpenSearch-Format.
 - `GET /opensearch.xml` macht Wayon im Browser als Suchmaschine hinzufügbar.
+
+### Fehlersuche
+
+**NGINX meldet „502 Bad Gateway“:** NGINX erreicht Wayon auf `127.0.0.1:8080` nicht, der Dienst läuft also nicht. Prüfen:
+
+```bash
+sudo systemctl status wayon                    # läuft der Dienst?
+sudo journalctl -u wayon -n 30 --no-pager      # Fehlermeldung von Wayon
+curl -I http://127.0.0.1:8080/                 # antwortet Wayon direkt?
+sudo tail -n 20 /var/log/nginx/error.log       # was NGINX sieht
+```
+
+Häufige Ursachen:
+
+| Meldung im Journal | Lösung |
+|---|---|
+| `status=203/EXEC` oder „No such file“ | Programm fehlt unter `/usr/local/bin/wayon`: `sudo cp ~/.cargo/bin/wayon /usr/local/bin/` |
+| `Adresse 127.0.0.1:8080 nicht verfügbar` | Port belegt: `sudo ss -ltnp 'sport = :8080'` zeigt, welches Programm ihn nutzt |
+| `Permission denied` bei `/var/lib/wayon` | Daten gehören einem anderen Benutzer: `sudo chown -R wayon:wayon /var/lib/wayon` |
+| `Kein Index in …` (ältere Wayon-Versionen) | Index fehlt: `wayon index` ausführen oder Wayon aktualisieren; neue Versionen starten auch ohne Index |
+
+**Startseite zeigt „Der Suchindex wird gerade aufgebaut oder fehlt noch“:** Wayon läuft, findet aber unter `/var/lib/wayon/index` keinen Index. Crawl und Index müssen mit `--data /var/lib/wayon` laufen, nicht im Repository-Ordner (dort landen sie sonst in `./data`).
 
 ## Architektur
 

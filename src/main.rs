@@ -172,12 +172,11 @@ fn main() -> Result<()> {
             print_sizes(&Index::open(&index_dir)?);
         }
         Cmd::Serve { addr } => {
-            let index = Index::open(&index_dir)?;
             let rt = tokio::runtime::Builder::new_multi_thread()
                 .worker_threads(num_threads(4))
                 .enable_all()
                 .build()?;
-            rt.block_on(wayon::server::serve(index, addr))?;
+            rt.block_on(wayon::server::serve(index_dir, addr))?;
         }
         Cmd::Search { query, n, page } => {
             let index = Index::open(&index_dir)?;

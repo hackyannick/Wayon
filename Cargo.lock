@@ -2375,6 +2375,7 @@ dependencies = [
  "encoding_rs",
  "env_logger",
  "fst",
+ "libc",
  "log",
  "memmap2",
  "rayon",

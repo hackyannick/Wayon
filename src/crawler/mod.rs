@@ -174,12 +174,25 @@ fn now_secs() -> u64 {
 }
 
 impl Crawler {
-    pub fn new(cfg: CrawlConfig) -> Result<Crawler> {
+    pub fn new(mut cfg: CrawlConfig) -> Result<Crawler> {
+        // Jede Verbindung braucht einen Datei-Deskriptor. Das Standardlimit
+        // (oft 1024) reicht bei vielen Hosts nicht – anheben bzw. drosseln.
+        let fd_limit = raise_fd_limit();
+        let pool_idle = if fd_limit >= 8192 { 1 } else { 0 };
+        let max_conc = (fd_limit.saturating_sub(128) / 3).max(4) as usize;
+        if cfg.concurrency > max_conc {
+            log::warn!(
+                "Limit für offene Dateien ist {fd_limit}: Parallelität von {} auf {max_conc} reduziert \
+                 (mehr erlaubt z.B. `ulimit -n 65536` vor dem Start)",
+                cfg.concurrency
+            );
+            cfg.concurrency = max_conc;
+        }
         let mut b = reqwest::Client::builder()
             .user_agent(cfg.user_agent.clone())
             .timeout(cfg.timeout)
             .connect_timeout(Duration::from_secs(10))
-            .pool_max_idle_per_host(1)
+            .pool_max_idle_per_host(pool_idle)
             .pool_idle_timeout(Duration::from_secs(30))
             .redirect(reqwest::redirect::Policy::limited(5));
         if !cfg.use_env_proxy {
@@ -338,6 +351,7 @@ impl Crawler {
         let mut in_flight = 0usize;
         let mut started = 0u64;
         let mut stopping = false;
+        let mut fatal: Option<anyhow::Error> = None;
         let t0 = Instant::now();
         let mut last_report = Instant::now();
         let ctrl_c = shutdown_signal();
@@ -367,21 +381,13 @@ impl Crawler {
                         h.origin.clone(),
                         cfg.read_sitemaps,
                     );
+                    // robots.txt und Sitemaps laufen im selben Slot: so begrenzt
+                    // --concurrency auch die Sitemap-Downloads. Die Robots-Nachricht
+                    // gibt den Slot frei und wird deshalb zuletzt gesendet.
                     tokio::spawn(async move {
                         let robots = c.fetch_robots(&o).await;
-                        let sitemaps = if read_sm {
-                            robots.sitemaps.clone()
-                        } else {
-                            Vec::new()
-                        };
-                        let _ = tx
-                            .send(Msg::Robots {
-                                origin: origin_of(&o),
-                                robots,
-                            })
-                            .await;
-                        if !sitemaps.is_empty() {
-                            let urls = c.fetch_sitemaps(&sitemaps).await;
+                        if read_sm && !robots.sitemaps.is_empty() {
+                            let urls = c.fetch_sitemaps(&robots.sitemaps).await;
                             let _ = tx
                                 .send(Msg::Sitemap {
                                     origin: origin_of(&o),
@@ -389,6 +395,12 @@ impl Crawler {
                                 })
                                 .await;
                         }
+                        let _ = tx
+                            .send(Msg::Robots {
+                                origin: origin_of(&o),
+                                robots,
+                            })
+                            .await;
                     });
                     continue;
                 }
@@ -437,7 +449,11 @@ impl Crawler {
             tokio::select! {
                 msg = rx.recv() => {
                     let Some(msg) = msg else { break };
-                    this.handle(msg, &mut fr, &mut writer, &mut stats, &mut in_flight)?;
+                    if let Err(e) = this.handle(msg, &mut fr, &mut writer, &mut stats, &mut in_flight) {
+                        log::error!("Schwerer Fehler: {e:#} – beende Crawl und speichere Warteschlange");
+                        fatal.get_or_insert(e);
+                        stopping = true;
+                    }
                 }
                 _ = async {
                     match next_wake {
@@ -459,11 +475,19 @@ impl Crawler {
                     stats.fetched, stats.stored, stats.errors, stats.skipped,
                     stats.fetched as f64 / secs, fr.queued, fr.hosts.len()
                 );
-                writer.flush()?;
+                if let Err(e) = writer.flush() {
+                    log::error!("Schreiben fehlgeschlagen: {e:#}");
+                    fatal.get_or_insert(e);
+                    stopping = true;
+                }
             }
         }
-        writer.flush()?;
+        let flushed = writer.flush();
         this.save_frontier(&fr)?;
+        if let Some(e) = fatal {
+            return Err(e);
+        }
+        flushed?;
         log::info!(
             "Crawl beendet: {} Seiten geladen, {} gespeichert, {} Fehler, {:.1} MiB in {:.0?}",
             stats.fetched,
@@ -626,10 +650,12 @@ impl Crawler {
 
     async fn fetch_sitemaps(&self, sitemaps: &[String]) -> Vec<String> {
         let mut out = Vec::new();
+        // Mehr URLs als pro Host erlaubt lohnt sich nicht zu laden
+        let limit = (self.cfg.max_pages_per_host as usize).min(20_000);
         let mut todo: VecDeque<String> = sitemaps.iter().take(3).cloned().collect();
         let mut fetched = 0;
         while let Some(sm) = todo.pop_front() {
-            if fetched >= 6 || out.len() >= 20_000 {
+            if fetched >= 6 || out.len() >= limit {
                 break;
             }
             fetched += 1;
@@ -652,7 +678,7 @@ impl Crawler {
                     if todo.len() < 10 {
                         todo.push_back(loc);
                     }
-                } else if out.len() < 20_000 {
+                } else if out.len() < limit {
                     out.push(loc);
                 }
             }
@@ -741,6 +767,37 @@ impl Crawler {
             bytes,
             redirected_from,
         })
+    }
+}
+
+/// Hebt das Soft-Limit für offene Dateien bis 65536 (bzw. bis zum Hard-Limit) an
+/// und liefert das danach gültige Limit.
+#[allow(clippy::unnecessary_cast)] // rlim_t ist nicht auf allen Plattformen u64
+pub fn raise_fd_limit() -> u64 {
+    #[cfg(unix)]
+    unsafe {
+        let mut rl = libc::rlimit {
+            rlim_cur: 0,
+            rlim_max: 0,
+        };
+        if libc::getrlimit(libc::RLIMIT_NOFILE, &mut rl) != 0 {
+            return 1024;
+        }
+        let want = rl.rlim_max.min(65_536);
+        if rl.rlim_cur < want {
+            let new = libc::rlimit {
+                rlim_cur: want,
+                rlim_max: rl.rlim_max,
+            };
+            if libc::setrlimit(libc::RLIMIT_NOFILE, &new) == 0 {
+                rl.rlim_cur = want;
+            }
+        }
+        rl.rlim_cur as u64
+    }
+    #[cfg(not(unix))]
+    {
+        u64::MAX
     }
 }
 

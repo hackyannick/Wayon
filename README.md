@@ -65,17 +65,18 @@ Sie enthält 100 inhaltsreiche, gut crawlbare Websites, überwiegend deutschspra
 
 ### Als Dienst betreiben (Linux, systemd)
 
+Im Repository-Ordner, nach `cargo install --path .`:
+
 ```bash
-sudo cp ~/.cargo/bin/wayon /usr/local/bin/
-sudo useradd --system --home /var/lib/wayon --create-home wayon
-sudo cp deploy/wayon.service /etc/systemd/system/
-sudo systemctl daemon-reload && sudo systemctl enable --now wayon
+sudo deploy/install-service.sh
 ```
 
-Crawl und Index laufen als derselbe Benutzer und im selben Datenverzeichnis wie der Dienst:
+Das Skript legt den Systembenutzer `wayon` an, installiert das Programm nach `/usr/local/bin`, richtet `/var/lib/wayon` ein (inklusive Seed-Liste als `seeds.txt`), übernimmt einen bereits in `./data` gecrawlten Bestand und startet den Dienst. Es lässt sich nach jedem Update erneut ausführen.
+
+Crawl und Index laufen danach als Benutzer `wayon` und im selben Datenverzeichnis wie der Dienst:
 
 ```bash
-sudo -u wayon wayon --data /var/lib/wayon crawl --seeds-file /pfad/zu/seeds/top100.txt --stay-on-domains
+sudo -u wayon wayon --data /var/lib/wayon crawl --seeds-file /var/lib/wayon/seeds.txt --stay-on-domains
 sudo -u wayon wayon --data /var/lib/wayon index
 ```
 
@@ -155,6 +156,7 @@ Häufige Ursachen:
 | `status=203/EXEC` oder „No such file“ | Programm fehlt unter `/usr/local/bin/wayon`: `sudo cp ~/.cargo/bin/wayon /usr/local/bin/` |
 | `Adresse 127.0.0.1:8080 nicht verfügbar` | Port belegt: `sudo ss -ltnp 'sport = :8080'` zeigt, welches Programm ihn nutzt |
 | `Permission denied` bei `/var/lib/wayon` | Daten gehören einem anderen Benutzer: `sudo chown -R wayon:wayon /var/lib/wayon` |
+| `status=217/USER` | Benutzer `wayon` fehlt: `sudo deploy/install-service.sh` ausführen |
 | `Kein Index in …` (ältere Wayon-Versionen) | Index fehlt: `wayon index` ausführen oder Wayon aktualisieren; neue Versionen starten auch ohne Index |
 
 **Startseite zeigt „Der Suchindex wird gerade aufgebaut oder fehlt noch“:** Wayon läuft, findet aber unter `/var/lib/wayon/index` keinen Index. Crawl und Index müssen mit `--data /var/lib/wayon` laufen, nicht im Repository-Ordner (dort landen sie sonst in `./data`).

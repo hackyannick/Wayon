@@ -92,8 +92,14 @@ enum Cmd {
     },
 }
 
+/// Standard-Logfilter: Wayon informativ, Bibliotheken nur bei echten Problemen.
+/// html5ever meldet sonst jede unsaubere HTML-Seite ("foster parenting …"),
+/// der TLS-Prüfer jedes fehlerhafte Zertifikat – beides zählt der Crawler
+/// ohnehin als Fehler bzw. ignoriert es.
+const DEFAULT_LOG: &str = "info,html5ever=error,selectors=error,rustls=error,rustls_platform_verifier=off,hyper=warn,hyper_util=warn,h2=warn,reqwest=warn,tower=warn";
+
 fn main() -> Result<()> {
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(DEFAULT_LOG))
         .format_target(false)
         .init();
     let cli = Cli::parse();

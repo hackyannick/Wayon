@@ -265,8 +265,10 @@ pub fn build(cfg: &BuildConfig) -> Result<IndexMeta> {
     // Hosts: zusammenhängende Doc-ID-Bereiche; pro Dokument nur noch eine Host-ID.
     let mut hosts: Vec<(String, u32, u32)> = Vec::new();
     let mut doc_host: Vec<u32> = Vec::with_capacity(n);
+    let mut is_home: Vec<bool> = Vec::with_capacity(n);
     for (i, d) in docs.iter().enumerate() {
         let h = d.0.split('/').next().unwrap_or("");
+        is_home.push(d.0.split_once('/').is_some_and(|(_, rest)| rest.is_empty()));
         match hosts.last_mut() {
             Some(last) if last.0 == h => last.2 += 1,
             _ => hosts.push((h.to_string(), i as u32, 1)),
@@ -340,6 +342,9 @@ pub fn build(cfg: &BuildConfig) -> Result<IndexMeta> {
         }
     }
     drop(url_to_doc);
+    let (graph, removed) = pagerank::drop_template_links(graph, site_of_doc, &is_home);
+    drop(is_home);
+    log::info!("{removed} Navigations-/Fußzeilen-Links aus dem Linkgraphen entfernt");
     let pr = pagerank::pagerank(&graph, 30, 0.85);
     log::info!(
         "Linkgraph: {} Kanten, PageRank berechnet ({:.1?})",

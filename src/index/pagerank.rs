@@ -42,6 +42,59 @@ impl Default for LinkGraph {
     }
 }
 
+/// Entfernt „Template-Links“: domaininterne Links auf Seiten, die von einem großen
+/// Teil der eigenen Website verlinkt werden (Fußzeile, Navigation: Impressum,
+/// Hilfe, Sonderzeichen …). Solche Links sagen nichts über Wichtigkeit aus,
+/// würden diesen Seiten aber den höchsten PageRank der Website geben.
+/// Startseiten sind ausgenommen. Liefert den neuen Graphen und die Anzahl
+/// entfernter Kanten.
+pub fn drop_template_links(
+    g: LinkGraph,
+    site_of: impl Fn(u32) -> u32,
+    is_home: &[bool],
+) -> (LinkGraph, usize) {
+    let n = g.num_nodes();
+    let mut site_pages: Vec<u32> = Vec::new();
+    for d in 0..n as u32 {
+        let s = site_of(d) as usize;
+        if s >= site_pages.len() {
+            site_pages.resize(s + 1, 0);
+        }
+        site_pages[s] += 1;
+    }
+    let mut internal_in = vec![0u32; n];
+    for &t in &g.targets {
+        if t & INTERNAL_BIT != 0 {
+            internal_in[(t & !INTERNAL_BIT) as usize] += 1;
+        }
+    }
+    let template = |t: u32| -> bool {
+        let t = t as usize;
+        let cnt = internal_in[t];
+        cnt >= 10
+            && cnt as f32 >= TEMPLATE_SHARE * site_pages[site_of(t as u32) as usize] as f32
+            && !is_home.get(t).copied().unwrap_or(false)
+    };
+    let mut out = LinkGraph::new();
+    let mut removed = 0;
+    let mut buf = Vec::new();
+    for i in 0..n {
+        buf.clear();
+        for &t in &g.targets[g.offsets[i] as usize..g.offsets[i + 1] as usize] {
+            if t & INTERNAL_BIT != 0 && template(t & !INTERNAL_BIT) {
+                removed += 1;
+            } else {
+                buf.push(t);
+            }
+        }
+        out.push_node(&buf);
+    }
+    (out, removed)
+}
+
+/// Ab diesem Anteil verlinkender Seiten derselben Website gilt ein Link als Template-Link.
+const TEMPLATE_SHARE: f32 = 0.3;
+
 /// Berechnet PageRank; Ergebnis ist mit N skaliert (Mittelwert 1.0).
 pub fn pagerank(g: &LinkGraph, iterations: usize, damping: f32) -> Vec<f32> {
     let n = g.num_nodes();
@@ -101,6 +154,25 @@ pub fn quality_score(q: u8) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn template_links_removed() {
+        // Website mit 20 Seiten (0..20), alle verlinken Seite 1 (Fußzeile) und Startseite 0;
+        // Seite 1 bekommt zusätzlich einen externen Link von Seite 20 (andere Website).
+        let mut g = LinkGraph::new();
+        for _ in 0..20 {
+            g.push_node(&[INTERNAL_BIT, 1 | INTERNAL_BIT]);
+        }
+        g.push_node(&[1]);
+        let site = |d: u32| if d < 20 { 0 } else { 1 };
+        let mut home = vec![false; 21];
+        home[0] = true;
+        let (g2, removed) = drop_template_links(g, site, &home);
+        // Alle 20 internen Links auf Seite 1 fallen weg; die Links auf die
+        // Startseite und der externe Link bleiben.
+        assert_eq!(removed, 20);
+        assert_eq!(g2.num_edges(), 21);
+    }
 
     #[test]
     fn star_graph() {

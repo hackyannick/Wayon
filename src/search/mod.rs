@@ -19,11 +19,19 @@ const K1: f32 = 1.2;
 const FIELD_W: [f32; NUM_FIELDS] = [2.5, 1.4, 1.0, 1.6, 2.2];
 const FIELD_B: [f32; NUM_FIELDS] = [0.4, 0.5, 0.75, 0.3, 0.6];
 const STOPWORD_W: f32 = 0.25;
-const PROX_W: f32 = 3.0;
+/// Unsortierte Nähe (kleinstes Fenster mit allen Begriffen)
+const PROX_W: f32 = 1.5;
+/// Begriffe exakt in Query-Reihenfolge hintereinander im Text („windows 2000“)
+const PHRASE_BODY_W: f32 = 4.0;
+/// … bzw. im Titel
+const PHRASE_TITLE_W: f32 = 3.0;
 const TITLE_ALL_W: f32 = 2.0;
 const HOST_W: f32 = 3.0;
 const HOME_W: f32 = 1.0;
-const QUALITY_W: f32 = 3.0;
+/// PageRank skaliert die Relevanz nur (0,9× … 1,25×), statt Punkte zu addieren:
+/// eine beliebte Seite ohne passenden Inhalt soll nicht nach oben rutschen.
+const QUALITY_MIN: f32 = 0.9;
+const QUALITY_RANGE: f32 = 0.35;
 const DEPTH_PENALTY: f32 = 0.12;
 const RERANK_POOL: usize = 300;
 const MAX_PER_HOST: usize = 2;
@@ -178,6 +186,42 @@ fn min_window(lists: &[&[u32]]) -> u32 {
     }
 }
 
+/// Bonus für Begriffe in Query-Reihenfolge direkt hintereinander (Phrase) –
+/// getrennt für Titel und Text – plus schwächerer Bonus für bloße Nähe.
+/// `lists[j]` = (sortierte Positionen, wie viele davon im Titel liegen).
+fn phrase_and_proximity(lists: &[Option<(Vec<u32>, usize)>], offsets: &[u32], k_total: f32) -> f32 {
+    let mut score = 0.0;
+    let n_pairs = offsets.len();
+    let mut title_pairs = 0;
+    for (j, &off) in offsets.iter().enumerate() {
+        let (Some((a, at)), Some((b, bt))) = (&lists[j], &lists[j + 1]) else {
+            continue;
+        };
+        let (a_title, a_body) = a.split_at(*at);
+        let (b_title, b_body) = b.split_at(*bt);
+        let hits = |xs: &[u32], ys: &[u32]| {
+            xs.iter()
+                .filter(|&&p| ys.binary_search(&(p + off)).is_ok())
+                .count() as f32
+        };
+        let body = hits(a_body, b_body);
+        if hits(a_title, b_title) > 0.0 {
+            title_pairs += 1;
+        }
+        score += PHRASE_BODY_W * body / (body + 1.0) / n_pairs as f32;
+    }
+    if n_pairs > 0 {
+        score += PHRASE_TITLE_W * title_pairs as f32 / n_pairs as f32;
+    }
+    let present: Vec<&[u32]> = lists.iter().flatten().map(|(v, _)| v.as_slice()).collect();
+    if present.len() >= 2 {
+        let k = present.len() as f32;
+        let w = min_window(&present) as f32;
+        score += PROX_W * (k / w.max(k)) * (k / k_total);
+    }
+    score
+}
+
 fn phrase_match(lists: &[&[u32]]) -> bool {
     let Some(first) = lists.first() else {
         return true;
@@ -197,6 +241,8 @@ pub struct Searcher<'a> {
 
 struct Plan {
     group_words: Vec<String>,
+    /// Position des ersten Vorkommens jeder Gruppe in der Query (für Phrasen-Abstände)
+    first_word: Vec<usize>,
     required: Vec<usize>,
     phrases: Vec<Vec<usize>>,
 }
@@ -227,12 +273,14 @@ impl<'a> Searcher<'a> {
     fn plan(&self, pq: &query::ParsedQuery) -> Plan {
         let mut group_words: Vec<String> = Vec::new();
         let mut word_group = Vec::new();
-        for w in &pq.words {
+        let mut first_word = Vec::new();
+        for (wi, w) in pq.words.iter().enumerate() {
             let f = text::fold(w);
             let gi = match group_words.iter().position(|g| text::fold(g) == f) {
                 Some(i) => i,
                 None => {
                     group_words.push(w.clone());
+                    first_word.push(wi);
                     group_words.len() - 1
                 }
             };
@@ -252,6 +300,7 @@ impl<'a> Searcher<'a> {
         }
         Plan {
             group_words,
+            first_word,
             required,
             phrases,
         }
@@ -516,9 +565,7 @@ impl<'a> Searcher<'a> {
                     }
                 }
             }
-            s += QUALITY_W * quality_score(meta.quality)
-                - DEPTH_PENALTY * meta.depth().min(8) as f32;
-            // Billige Zusatzsignale zuerst: Titel und Domain
+            // Billige Zusatzsignale: Titel und Domain
             if in_title == n_groups {
                 s += TITLE_ALL_W;
                 // Titel besteht (fast) nur aus den Suchbegriffen
@@ -550,6 +597,8 @@ impl<'a> Searcher<'a> {
                     }
                 }
             }
+            s = s * (QUALITY_MIN + QUALITY_RANGE * quality_score(meta.quality))
+                - DEPTH_PENALTY * meta.depth().min(8) as f32;
             let threshold = if heap.len() >= first_pool {
                 heap.peek().map(|r| r.0 .0 .0).unwrap_or(f32::MIN)
             } else {
@@ -566,7 +615,7 @@ impl<'a> Searcher<'a> {
                 break;
             }
         }
-        // ---- Stufe 2: Termnähe für die besten Kandidaten ----
+        // ---- Stufe 2: Phrasen und Termnähe für die besten Kandidaten ----
         let mut cands: Vec<(f32, u32)> = heap.into_iter().map(|Reverse((s, d))| (s.0, d)).collect();
         let proximity_groups: Vec<usize> =
             (0..n_groups).filter(|&g| groups[g].weight >= 1.0).collect();
@@ -576,24 +625,30 @@ impl<'a> Searcher<'a> {
                 .iter()
                 .map(|&g| Group::new(index, &plan.group_words[g], 1.0))
                 .collect();
+            // Abstand benachbarter Begriffe in der Query (Füllwörter dazwischen zählen mit)
+            let offsets: Vec<u32> = proximity_groups
+                .windows(2)
+                .map(|w| {
+                    (plan.first_word[w[1]] as i64 - plan.first_word[w[0]] as i64).max(1) as u32
+                })
+                .collect();
             let k_total = n_groups as f32;
+            // (Positionen, Anzahl davon im Titel) je Gruppe
+            let mut lists: Vec<Option<(Vec<u32>, usize)>> = vec![None; fresh.len()];
             for c in cands.iter_mut() {
-                let mut lists: Vec<Vec<u32>> = Vec::with_capacity(fresh.len());
-                for g in fresh.iter_mut() {
+                for (j, g) in fresh.iter_mut().enumerate() {
+                    lists[j] = None;
                     if g.advance(c.1) == c.1 {
+                        let n_title = g.tfs()[F_TITLE] as usize;
                         let mut v = Vec::new();
                         g.positions(&mut v, &mut tmp);
                         if !v.is_empty() {
-                            lists.push(v);
+                            let nt = n_title.min(v.len());
+                            lists[j] = Some((v, nt));
                         }
                     }
                 }
-                if lists.len() >= 2 {
-                    let refs: Vec<&[u32]> = lists.iter().map(|v| v.as_slice()).collect();
-                    let k = refs.len() as f32;
-                    let w = min_window(&refs) as f32;
-                    c.0 += PROX_W * (k / w.max(k)) * (k / k_total);
-                }
+                c.0 += phrase_and_proximity(&lists, &offsets, k_total);
             }
         }
         cands.sort_unstable_by(|a, b| b.0.total_cmp(&a.0));

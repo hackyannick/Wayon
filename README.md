@@ -65,6 +65,40 @@ Alle Daten liegen unter `--data` (Standard `./data`): `data/crawl/` enthält die
 - `--max-per-host 2000` × 100 Websites ergibt ca. 200.000 Seiten. Wayon fragt jede Website höchstens einmal pro Sekunde an. Damit dauert das je nach Leitung grob 1–3 Stunden und braucht ungefähr 1–2 GB Platz für Rohdaten und Index zusammen (grobe Schätzung, je nach Seiten).
 - Websites, deren robots.txt fremde Crawler verbietet, werden automatisch übersprungen.
 
+### Großer Index: Common Crawl und Wikipedia importieren
+
+Crawlen allein ist langsam: jede Website darf nur höflich (≈1 Anfrage/s) abgefragt werden. Viel schneller zu einem großen Index kommt man mit fertigen, frei nutzbaren Datensätzen. Beide Importer schreiben in denselben Crawl-Speicher; danach genügt `wayon index`.
+
+**Komplette Wikipedia** (alle Artikel einer Sprache als HTML, inklusive interner Links für PageRank und Ankertexte):
+
+```bash
+sudo -u wayon wayon --data /var/lib/wayon import wikipedia --lang de    # ca. 3 Mio. Artikel
+sudo -u wayon wayon --data /var/lib/wayon import wikipedia --lang en    # ca. 7 Mio. Artikel
+```
+
+Wayon sucht den neuesten [Wikimedia-HTML-Dump](https://dumps.wikimedia.org/other/enterprise_html/) und verarbeitet ihn direkt beim Herunterladen (kein Zwischenspeichern). Mit `--source DATEI_ODER_URL` lässt sich auch ein bereits heruntergeladener Dump angeben.
+
+**Common Crawl** (frei nutzbares Web-Archiv, mehrere Milliarden Seiten pro Monat):
+
+```bash
+sudo -u wayon wayon --data /var/lib/wayon import cc --files 20             # neuester Crawl, Deutsch+Englisch
+sudo -u wayon wayon --data /var/lib/wayon import cc --files 200 --lang de  # nur Deutsch
+```
+
+Jede Datei ist ein ~1-GB-Download mit ~30.000 Seiten, davon sind etwa die Hälfte deutsch oder englisch. Erledigte Dateien merkt sich Wayon in `crawl/cc-done.txt`; ein erneuter Aufruf macht mit den nächsten weiter. Mit `--crawl CC-MAIN-…` wählt man einen bestimmten Crawl, mit `--lang all` behält man alle Sprachen.
+
+Lokale WARC-Dateien (z.B. eigene Archive): `wayon import warc datei1.warc.gz datei2.warc.gz`.
+
+**Größenordnungen** (gemessen: ~2.100 Seiten/s Verarbeitung auf 4 Kernen; ~4,4 KB pro Seite im Crawl-Speicher, ~2,5 KB pro Seite im Index):
+
+| Umfang | Download Common Crawl (de+en) | Crawl-Speicher | Index | RAM beim Indexieren |
+|---|---|---|---|---|
+| 1 Mio. Seiten | ca. 70 Dateien / 75 GB | ca. 4,5 GB | ca. 2,5 GB | ca. 1 GB |
+| 10 Mio. Seiten | ca. 700 Dateien / 750 GB | ca. 45 GB | ca. 25 GB | ca. 4 GB |
+| 50 Mio. Seiten | ca. 3.500 Dateien / 3,7 TB | ca. 220 GB | ca. 125 GB | ca. 15 GB |
+
+Bei einer 1-Gbit/s-Leitung ist eine Datei in etwa 10 s geladen; die Verarbeitung dauert ähnlich lang.
+
 ### Als Dienst betreiben (Linux, systemd)
 
 Im Repository-Ordner, nach `cargo install --path .`:
@@ -122,6 +156,7 @@ Wer die Konfiguration lieber von Hand einrichtet: `deploy/nginx/wayon.conf` nach
 | `serve [--addr]` | Weboberfläche, JSON-API und Autovervollständigung starten |
 | `search QUERY` | Suche im Terminal |
 | `stats` | Dokumente, Terme und Größe jeder Indexdatei anzeigen |
+| `import cc / wikipedia / warc` | Große Datensätze importieren (siehe oben) |
 | `dump [--filter]` | Gecrawlte Rohdaten prüfen |
 
 ### Suchsyntax

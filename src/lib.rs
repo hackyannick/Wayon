@@ -13,6 +13,7 @@
 
 pub mod codec;
 pub mod crawler;
+pub mod import;
 pub mod index;
 pub mod search;
 pub mod server;

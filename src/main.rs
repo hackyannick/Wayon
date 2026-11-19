@@ -82,6 +82,9 @@ enum Cmd {
     },
     /// Statistiken zum Index anzeigen
     Stats,
+    /// Große Datensätze importieren (Common Crawl, Wikipedia, WARC-Dateien)
+    #[command(subcommand)]
+    Import(ImportCmd),
     /// Gecrawlte Seiten anzeigen (zur Kontrolle)
     Dump {
         #[arg(long, default_value_t = 10)]
@@ -97,6 +100,37 @@ enum Cmd {
 /// der TLS-Prüfer jedes fehlerhafte Zertifikat – beides zählt der Crawler
 /// ohnehin als Fehler bzw. ignoriert es.
 const DEFAULT_LOG: &str = "info,html5ever=error,selectors=error,rustls=error,rustls_platform_verifier=off,hyper=warn,hyper_util=warn,h2=warn,reqwest=warn,tower=warn";
+
+#[derive(Subcommand)]
+enum ImportCmd {
+    /// Webseiten aus Common Crawl importieren (fortsetzbar)
+    Cc {
+        /// Anzahl WARC-Dateien in diesem Lauf (je ~1 GB Download, ~30 000 Seiten)
+        #[arg(long, default_value_t = 10)]
+        files: usize,
+        /// Crawl-Kennung, z.B. CC-MAIN-2026-44 (Standard: neuester)
+        #[arg(long)]
+        crawl: Option<String>,
+        /// Sprachen behalten: "de,en", "de" oder "all"
+        #[arg(long, default_value = "de,en")]
+        lang: String,
+    },
+    /// Komplette Wikipedia einer Sprache importieren (Wikimedia-HTML-Dump)
+    Wikipedia {
+        /// Sprachkürzel der Wikipedia, z.B. de, en
+        #[arg(long, default_value = "de")]
+        lang: String,
+        /// Lokale .tar.gz-Datei oder URL statt automatischer Suche nach dem neuesten Dump
+        #[arg(long)]
+        source: Option<String>,
+    },
+    /// Lokale oder entfernte WARC-Dateien importieren
+    Warc {
+        files: Vec<String>,
+        #[arg(long, default_value = "all")]
+        lang: String,
+    },
+}
 
 fn main() -> Result<()> {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(DEFAULT_LOG))
@@ -206,6 +240,39 @@ fn main() -> Result<()> {
                     strip_tags(&h.snippet)
                 );
             }
+        }
+        Cmd::Import(cmd) => {
+            use wayon::import::{commoncrawl, wikipedia, LangFilter};
+            let t0 = std::time::Instant::now();
+            let stats = match cmd {
+                ImportCmd::Cc { files, crawl, lang } => {
+                    commoncrawl::import_cc(&crawl_dir, crawl, files, LangFilter::parse(&lang))?
+                }
+                ImportCmd::Warc { files, lang } => {
+                    anyhow::ensure!(!files.is_empty(), "keine WARC-Dateien angegeben");
+                    commoncrawl::import_warc_files(&files, &crawl_dir, LangFilter::parse(&lang))?
+                }
+                ImportCmd::Wikipedia { lang, source } => {
+                    let src = match source {
+                        Some(s) => s,
+                        None => {
+                            let u = wikipedia::latest_dump_url(&lang)?;
+                            log::info!("Dump: {u}");
+                            u
+                        }
+                    };
+                    wikipedia::import_wikipedia(&src, &crawl_dir)?
+                }
+            };
+            println!(
+                "Import fertig: {} Dokumente gelesen, {} gespeichert, {} gefiltert, {:.1} GiB in {:.0?}",
+                stats.seen,
+                stats.stored,
+                stats.filtered,
+                stats.bytes_in as f64 / 1073741824.0,
+                t0.elapsed()
+            );
+            println!("Jetzt den Index neu bauen: wayon index");
         }
         Cmd::Dump { limit, filter } => {
             let mut shown = 0;

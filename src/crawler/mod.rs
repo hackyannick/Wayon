@@ -166,7 +166,7 @@ fn origin_of(u: &Url) -> String {
     u.origin().ascii_serialization()
 }
 
-fn now_secs() -> u64 {
+pub fn now_secs() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs())
@@ -739,37 +739,10 @@ impl Crawler {
         let (body, _truncated) = read_limited(resp, self.cfg.max_body_bytes).await?;
         let bytes = body.len() as u64;
         let fu = final_url.clone();
-        let mut record = tokio::task::spawn_blocking(move || {
-            let html = html::decode_body(&body, ct.as_deref());
-            let ex = html::extract(&html, &fu);
-            let sample = format!(
-                "{} {} {}",
-                ex.title,
-                ex.description,
-                prefix(&ex.body, 20_000)
-            );
-            let lang = text::detect_lang(&sample, ex.lang_hint.as_deref());
-            PageRecord {
-                url: fu.to_string(),
-                fetched_at: now_secs(),
-                status,
-                lang: lang as u8,
-                noindex: ex.noindex,
-                canonical: ex.canonical,
-                title: ex.title,
-                description: ex.description,
-                headings: ex.headings,
-                body: ex.body,
-                links: ex.links,
-            }
+        let record = tokio::task::spawn_blocking(move || {
+            record_from_html(&fu, &body, ct.as_deref(), &robots_tag, now_secs())
         })
         .await?;
-        if robots_tag.contains("noindex") || robots_tag.contains("none") {
-            record.noindex = true;
-        }
-        if robots_tag.contains("nofollow") {
-            record.links.clear();
-        }
         let redirected_from = (record.url != url).then(|| url.to_string());
         Ok(FetchResult::Html {
             record,
@@ -777,6 +750,48 @@ impl Crawler {
             redirected_from,
         })
     }
+}
+
+/// Wandelt eine geladene HTML-Seite in einen Crawl-Record um (Zeichensatz
+/// erkennen, Text/Links extrahieren, Sprache bestimmen, X-Robots-Tag beachten).
+/// Wird vom Crawler und von den Importern (Common Crawl, Wikipedia) genutzt.
+pub fn record_from_html(
+    url: &Url,
+    body: &[u8],
+    content_type: Option<&str>,
+    robots_tag: &str,
+    fetched_at: u64,
+) -> PageRecord {
+    let html = html::decode_body(body, content_type);
+    let ex = html::extract(&html, url);
+    let sample = format!(
+        "{} {} {}",
+        ex.title,
+        ex.description,
+        prefix(&ex.body, 20_000)
+    );
+    let lang = text::detect_lang(&sample, ex.lang_hint.as_deref());
+    let robots_tag = robots_tag.to_ascii_lowercase();
+    let mut record = PageRecord {
+        url: url.to_string(),
+        fetched_at,
+        status: 200,
+        lang: lang as u8,
+        noindex: ex.noindex,
+        canonical: ex.canonical,
+        title: ex.title,
+        description: ex.description,
+        headings: ex.headings,
+        body: ex.body,
+        links: ex.links,
+    };
+    if robots_tag.contains("noindex") || robots_tag.contains("none") {
+        record.noindex = true;
+    }
+    if robots_tag.contains("nofollow") {
+        record.links.clear();
+    }
+    record
 }
 
 /// Hebt das Soft-Limit für offene Dateien bis 65536 (bzw. bis zum Hard-Limit) an
